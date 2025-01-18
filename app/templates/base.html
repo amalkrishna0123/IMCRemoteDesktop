@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Desktop App</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <nav class="gradient-bg text-white shadow-lg">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div class="text-xl font-bold">Remote Desktop</div>
+                {% if user.is_authenticated %}
+                <div class="flex items-center space-x-4">
+                    <span>{{ user.username }}</span>
+                    <a href="{% url 'logout' %}" class="bg-white text-purple-600 px-4 py-2 rounded-lg hover:bg-gray-100">Logout</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+    
+    <main class="container mx-auto px-6 py-8">
+        {% if messages %}
+        <div class="mb-8">
+            {% for message in messages %}
+            <div class="bg-{{ message.tags }}-100 border border-{{ message.tags }}-400 text-{{ message.tags }}-700 px-4 py-3 rounded relative" role="alert">
+                <span class="block sm:inline">{{ message }}</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

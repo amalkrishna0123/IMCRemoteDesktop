@@ -1,0 +1,145 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="space-y-8">
+    <div class="bg-white rounded-lg shadow-lg p-8">
+        <h2 class="text-2xl font-bold mb-4">Your User ID: <span class="text-purple-600">{{ user_id }}</span></h2>
+        
+        {% if not active_room %}
+        <div class="space-y-4">
+            <div>
+                <label class="block text-gray-700 text-sm font-bold mb-2" for="receiver_id">
+                    Connect to User ID
+                </label>
+                <input class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" 
+                       id="receiver_id" type="text" maxlength="10" placeholder="Enter 10-digit User ID">
+            </div>
+            <button onclick="createRoom()" 
+                    class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                Create Room
+            </button>
+        </div>
+        {% else %}
+        <div class="space-y-4">
+            <p class="text-lg">Connected to: <span class="font-bold">{{ active_room.receiver.user_id }}</span></p>
+            <div id="remote-screen" class="w-full h-96 bg-gray-100 rounded-lg mb-4 flex items-center justify-center">
+                <p class="text-gray-500">Remote screen will appear here</p>
+            </div>
+            <div class="flex space-x-4">
+                <button onclick="toggleAudio()" 
+                        class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                    Toggle Audio
+                </button>
+                <button onclick="toggleVideo()" 
+                        class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                    Toggle Video
+                </button>
+                <a href="{% url 'end_room' active_room.room_id %}" 
+                   class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline text-center">
+                    End Session
+                </a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="bg-white rounded-lg shadow-lg p-8">
+        <h3 class="text-xl font-bold mb-4">Connection History</h3>
+        <div class="space-y-2">
+            {% for room in previous_rooms %}
+            <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                <div>
+                    <p class="font-medium">Connected with: {{ room.receiver.user_id }}</p>
+                    <p class="text-sm text-gray-500">{{ room.created_at|date:"F j, Y, g:i a" }}</p>
+                </div>
+                <span class="px-3 py-1 bg-gray-200 rounded-full text-sm">
+                    {% if room.is_active %}Active{% else %}Ended{% endif %}
+                </span>
+            </div>
+            {% empty %}
+            <p class="text-gray-500 text-center">No connection history</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<script>
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    async function createRoom() {
+        const receiverId = document.getElementById('receiver_id').value;
+        if (!receiverId || receiverId.length !== 10) {
+            alert('Please enter a valid 10-digit User ID');
+            return;
+        }
+
+        try {
+            const response = await fetch('{% url "create_room" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({
+                    receiver_id: receiverId
+                })
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to create room');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred while creating the room');
+        }
+    }
+
+    let audioEnabled = true;
+    let videoEnabled = true;
+
+    function toggleAudio() {
+        audioEnabled = !audioEnabled;
+        // Add your audio toggle logic here
+        console.log('Audio:', audioEnabled ? 'enabled' : 'disabled');
+    }
+
+    function toggleVideo() {
+        videoEnabled = !videoEnabled;
+        // Add your video toggle logic here
+        console.log('Video:', videoEnabled ? 'enabled' : 'disabled');
+    }
+
+    {% if active_room %}
+    // WebSocket connection for real-time updates
+    const roomSocket = new WebSocket(
+        'ws://' + window.location.host + '/ws/room/{{ active_room.room_id }}/'
+    );
+
+    roomSocket.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        // Handle incoming WebSocket messages
+        console.log('Received:', data);
+    };
+
+    roomSocket.onclose = function(e) {
+        console.error('Room socket closed unexpectedly');
+    };
+    {% endif %}
+</script>
+{% endblock %}
