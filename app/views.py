@@ -1,3 +1,4 @@
+import json
 from django.http import JsonResponse
 from django.shortcuts import render, redirect
 from django.contrib.auth import login, authenticate, logout
@@ -6,6 +7,9 @@ from django.contrib import messages
 from .models import CustomUser, Room
 from .forms import UserCreationForm
 from django.contrib.auth import get_user_model
+from django.db.models import Q 
+from django.views.decorators.csrf import ensure_csrf_cookie
+from channels.layers import get_channel_layer
 
 
 User = get_user_model()
@@ -61,42 +65,185 @@ def user_dashboard(request):
     if hasattr(request.user, 'user_type') and request.user.user_type == 'super_user':
         return redirect('superuser_dashboard')
     
-    active_room = Room.objects.filter(
-        creator=request.user,
+    # Get active rooms where user is either creator or receiver
+    active_rooms = Room.objects.filter(
+        (Q(creator=request.user) | Q(receiver=request.user)),
         is_active=True
-    ).first()
+    )
+    
+    # Get pending invitations
+    pending_invitations = Room.objects.filter(
+        receiver=request.user,
+        is_active=True,
+        is_accepted=False
+    )
     
     return render(request, 'user/dashboard.html', {
-        'active_room': active_room,
+        'active_rooms': active_rooms,
+        'pending_invitations': pending_invitations,
         'user_id': request.user.user_id
     })
 
+@ensure_csrf_cookie
 @login_required
 def create_room(request):
     if request.method == 'POST':
-        receiver_id = request.POST.get('receiver_id')
         try:
-            receiver = CustomUser.objects.get(user_id=receiver_id)
-            room = Room.objects.create(
-                creator=request.user,
-                receiver=receiver,
-                room_id=f"room_{request.user.user_id}_{receiver_id}"
-            )
-            return JsonResponse({'success': True, 'room_id': room.room_id})
-        except CustomUser.DoesNotExist:
-            return JsonResponse({'success': False, 'error': 'User not found'})
+            data = json.loads(request.body)
+            receiver_id = data.get('receiver_id')
+            
+            if not receiver_id:
+                return JsonResponse({'success': False, 'error': 'Receiver ID is required'})
+            
+            try:
+                # Check if room already exists
+                existing_room = Room.objects.filter(
+                    Q(creator=request.user, receiver__user_id=receiver_id, is_active=True) |
+                    Q(receiver=request.user, creator__user_id=receiver_id, is_active=True)
+                ).first()
+                
+                if existing_room:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': 'Active room already exists with this user'
+                    })
+                
+                # Find the receiver
+                receiver = CustomUser.objects.get(user_id=receiver_id)
+                
+                # Prevent creating room with yourself
+                if receiver == request.user:
+                    return JsonResponse({
+                        'success': False, 
+                        'error': 'Cannot create room with yourself'
+                    })
+                
+                # Create new room
+                room = Room.objects.create(
+                    creator=request.user,
+                    receiver=receiver,
+                    room_id=f"room_{request.user.user_id}_{receiver_id}"
+                )
+                
+                return JsonResponse({
+                    'success': True,
+                    'room_id': room.room_id
+                })
+                
+            except CustomUser.DoesNotExist:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'User not found'
+                })
+                
+        except json.JSONDecodeError:
+            return JsonResponse({
+                'success': False,
+                'error': 'Invalid JSON data'
+            })
+            
+    return JsonResponse({
+        'success': False,
+        'error': 'Invalid request method'
+    })
+
+@login_required
+def accept_room(request, room_id):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Invalid method'})
     
-    return JsonResponse({'success': False, 'error': 'Invalid request'})
+    try:
+        room = Room.objects.get(
+            room_id=room_id,
+            receiver=request.user,
+            is_active=True,
+            is_accepted=False
+        )
+        room.is_accepted = True
+        room.save()
+        return JsonResponse({'success': True})
+    except Room.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Room not found'})
+
+@login_required
+def reject_room(request, room_id):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'error': 'Invalid method'})
+    
+    try:
+        room = Room.objects.get(
+            room_id=room_id,
+            receiver=request.user,
+            is_active=True,
+            is_accepted=False
+        )
+        room.is_active = False
+        room.save()
+        return JsonResponse({'success': True})
+    except Room.DoesNotExist:
+        return JsonResponse({'success': False, 'error': 'Room not found'})
+
 
 @login_required
 def end_room(request, room_id):
-    room = Room.objects.get(room_id=room_id)
-    if room.creator == request.user:
+    try:
+        # Only allow creator or receiver to end the room
+        room = Room.objects.get(
+            room_id=room_id,
+            is_active=True,
+            creator=request.user,
+        ) | Room.objects.get(
+            room_id=room_id,
+            is_active=True,
+            receiver=request.user
+        )
         room.is_active = False
         room.save()
-    return redirect('user_dashboard')
+        return redirect('user_dashboard')
+    except Room.DoesNotExist:
+        messages.error(request, 'Room not found or you do not have permission.')
+        return redirect('user_dashboard')
+
+# @login_required
+# def reject_room(request, room_id):
+#     room = Room.objects.get(room_id=room_id, receiver=request.user)
+#     room.is_active = False
+#     room.save()
+#     return JsonResponse({'success': True})
 
 
 def logout_view(request):
     logout(request)  # Logs out the user
     return redirect('login')  # Redirects to the login page (or any other page)
+
+@login_required
+def send_offer(request, room_id):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            offer = data.get('offer')
+            
+            if not offer:
+                return JsonResponse({'success': False, 'error': 'Offer data is required'})
+            
+            # Save or process the offer as needed (e.g., store in the database or send it via WebSocket)
+            room = Room.objects.get(room_id=room_id)
+            
+            # Logic to send offer, for example, via WebSocket
+            channel_layer = get_channel_layer()
+            # You can send the offer to the corresponding room channel
+            channel_layer.send(
+                f"room_{room_id}",
+                {
+                    'type': 'webrtc.offer',
+                    'offer': offer
+                }
+            )
+
+            return JsonResponse({'success': True})
+        except json.JSONDecodeError:
+            return JsonResponse({'success': False, 'error': 'Invalid JSON data'})
+        except Room.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Room not found'})
+    
+    return JsonResponse({'success': False, 'error': 'Invalid request method'})

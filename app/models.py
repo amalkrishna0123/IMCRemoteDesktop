@@ -27,8 +27,16 @@ class Room(models.Model):
     receiver = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='received_rooms')
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
+    is_accepted = models.BooleanField(default=False)  # Add this field
 
-# from django.db import models
-# from django.contrib.auth.models import AbstractUser
-# import random
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['room_id', 'is_active'],
+                name='unique_active_room'
+            )
+        ]
+    
+    def __str__(self):
+        return f"Room {self.room_id} ({self.creator.username} -> {self.receiver.username})"
 

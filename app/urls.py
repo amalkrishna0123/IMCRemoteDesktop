@@ -8,5 +8,8 @@ urlpatterns = [
     path('dashboard/', views.user_dashboard, name='user_dashboard'),
     path('create-room/', views.create_room, name='create_room'),
     path('end-room/<str:room_id>/', views.end_room, name='end_room'),
-    path('logout/', views.logout_view, name='logout'),  # Use the new logout view
+    path('logout/', views.logout_view, name='logout'),
+    path('accept-room/<str:room_id>/', views.accept_room, name='accept_room'),
+    path('reject-room/<str:room_id>/', views.reject_room, name='reject_room'),
+    path('send-offer/<str:room_id>/', views.send_offer, name='send_offer'),
 ]
