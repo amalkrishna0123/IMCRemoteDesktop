@@ -83,7 +83,6 @@ def user_dashboard(request):
         'pending_invitations': pending_invitations,
         'user_id': request.user.user_id
     })
-
 @ensure_csrf_cookie
 @login_required
 def create_room(request):
@@ -98,8 +97,8 @@ def create_room(request):
             try:
                 # Check if room already exists
                 existing_room = Room.objects.filter(
-                    Q(creator=request.user, receiver__user_id=receiver_id, is_active=True) |
-                    Q(receiver=request.user, creator__user_id=receiver_id, is_active=True)
+                    (Q(creator=request.user, receiver__user_id=receiver_id, is_active=True) |
+                    Q(receiver=request.user, creator__user_id=receiver_id, is_active=True))
                 ).first()
                 
                 if existing_room:
@@ -135,17 +134,28 @@ def create_room(request):
                     'success': False,
                     'error': 'User not found'
                 })
+            except Exception as e:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Error creating room: {str(e)}'
+                })
                 
         except json.JSONDecodeError:
             return JsonResponse({
                 'success': False,
                 'error': 'Invalid JSON data'
             })
+        except Exception as e:
+            return JsonResponse({
+                'success': False,
+                'error': f'Unexpected error: {str(e)}'
+            })
             
     return JsonResponse({
         'success': False,
         'error': 'Invalid request method'
     })
+
 
 @login_required
 def accept_room(request, room_id):

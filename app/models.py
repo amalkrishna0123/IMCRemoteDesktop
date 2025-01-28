@@ -22,12 +22,12 @@ class CustomUser(AbstractUser):
 
         
 class Room(models.Model):
-    room_id = models.CharField(max_length=20, unique=True)
+    room_id = models.CharField(max_length=50, unique=True)  # Increased from 20 to 50
     creator = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='created_rooms')
     receiver = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name='received_rooms')
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=True)
-    is_accepted = models.BooleanField(default=False)  # Add this field
+    is_accepted = models.BooleanField(default=False)
 
     class Meta:
         constraints = [

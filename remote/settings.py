@@ -88,6 +88,12 @@ CHANNEL_LAYERS = {
 #     }
 # }
 
+CSRF_TRUSTED_ORIGINS = [
+    'https://remote.imcbs.com',
+    'https://www.remote.imcbs.com',
+]
+
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
