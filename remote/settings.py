@@ -99,12 +99,12 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'remotee',
         'USER': 'postgres',
-        'PASSWORD': '143@malIKKA',
+        'PASSWORD': 'info@imc',
         'HOST': 'localhost',  # or the server IP
         'PORT': '5432',
     }
 }
-
+# 143@malIKKA
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

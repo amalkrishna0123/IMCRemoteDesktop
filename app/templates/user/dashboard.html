@@ -168,7 +168,7 @@ function toggleVideo() {
 // WebSocket initialization
 function initializeWebSocket(roomId) {
     const ws = new WebSocket(
-        'ws://' + window.location.host + '/ws/room/' + roomId + '/'
+        'wss://' + window.location.host + '/ws/room/' + roomId + '/'
     );
 
     ws.onopen = function(e) {
