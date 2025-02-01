@@ -65,24 +65,26 @@ def user_dashboard(request):
     if hasattr(request.user, 'user_type') and request.user.user_type == 'super_user':
         return redirect('superuser_dashboard')
     
-    # Get active rooms where user is either creator or receiver
     active_rooms = Room.objects.filter(
         (Q(creator=request.user) | Q(receiver=request.user)),
         is_active=True
     )
     
-    # Get pending invitations
     pending_invitations = Room.objects.filter(
         receiver=request.user,
         is_active=True,
         is_accepted=False
     )
     
-    return render(request, 'user/dashboard.html', {
+    # Determine which template to use
+    template = 'user/controller_dashboard.html' if any(room.creator == request.user for room in active_rooms) else 'user/controlled_dashboard.html'
+    
+    return render(request, template, {
         'active_rooms': active_rooms,
         'pending_invitations': pending_invitations,
         'user_id': request.user.user_id
     })
+
 @ensure_csrf_cookie
 @login_required
 def create_room(request):

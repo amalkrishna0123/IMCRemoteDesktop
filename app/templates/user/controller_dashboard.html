@@ -1,0 +1,270 @@
+<!-- controlled_dashboard.html -->
+{% extends 'base.html' %}
+{% load static %}
+{% block content %}
+<div class="space-y-8">
+    <div class="bg-white rounded-lg shadow-lg p-8">
+        <h2 class="text-2xl font-bold mb-4">Screen Sharing Dashboard - Your User ID: <span class="text-purple-600">{{ user_id }}</span></h2>
+        
+        {% if active_rooms %}
+            {% for room in active_rooms %}
+            <div data-room-id="{{ room.room_id }}" 
+                 data-is-creator="{% if room.creator.id == request.user.id %}true{% else %}false{% endif %}"
+                 class="space-y-4">
+                <p class="text-lg">Sharing screen with: 
+                    <span class="font-bold">
+                        {% if room.creator == request.user %}
+                            {{ room.receiver.user_id }}
+                        {% else %}
+                            {{ room.creator.user_id }}
+                        {% endif %}
+                    </span>
+                </p>
+                <div class="flex space-x-4 items-center">
+                    <div id="local-screen" class="w-full h-[600px] bg-gray-100 rounded-lg mb-4">
+                        <video id="local-video" autoplay playsinline muted class="w-full h-full object-contain"></video>
+                    </div>
+                </div>
+                <div id="connection-status"></div>
+                <div class="flex space-x-4">
+                    <button onclick="toggleScreenShare()" 
+                            id="screen-share-toggle"
+                            class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                        Start Screen Share
+                    </button>
+                    <a href="{% url 'end_room' room_id=room.room_id %}" 
+                       class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline text-center">
+                        End Session
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        {% endif %}
+
+        <!-- Pending Invitations Section -->
+        {% if pending_invitations %}
+        <div class="mt-8">
+            <h3 class="text-xl font-bold mb-4">Pending Screen Share Requests</h3>
+            <div class="space-y-2">
+                {% for invitation in pending_invitations %}
+                <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                    <p>From: {{ invitation.creator.user_id }}</p>
+                    <div class="space-x-2">
+                        <button onclick="acceptRoom('{{ invitation.room_id }}')" 
+                                class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
+                            Accept
+                        </button>
+                        <button onclick="rejectRoom('{{ invitation.room_id }}')" 
+                                class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+                            Reject
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    const controllerState = {
+    peerConnection: null,
+    roomSocket: null,
+    isControlEnabled: false
+};
+
+const configuration = {
+    iceServers: [{
+        urls: 'stun:stun.l.google.com:19302'
+    }]
+};
+
+function initializeController(roomId) {
+    // Initialize WebSocket connection
+    controllerState.roomSocket = new WebSocket(
+        `wss://${window.location.host}/ws/room/${roomId}/`
+    );
+
+    setupWebSocketHandlers();
+    setupPeerConnection(roomId);
+}
+
+function setupWebSocketHandlers() {
+    controllerState.roomSocket.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
+        
+        switch (data.type) {
+            case 'webrtc.offer':
+                await handleOffer(data);
+                break;
+            case 'webrtc.answer':
+                await handleAnswer(data);
+                break;
+            case 'ice_candidate':
+                await handleIceCandidate(data);
+                break;
+        }
+    };
+}
+
+function setupPeerConnection(roomId) {
+    controllerState.peerConnection = new RTCPeerConnection(configuration);
+    
+    controllerState.peerConnection.ontrack = (event) => {
+        const remoteVideo = document.getElementById('remote-video');
+        if (remoteVideo && event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+        }
+    };
+
+    controllerState.peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+            controllerState.roomSocket.send(JSON.stringify({
+                type: 'ice_candidate',
+                candidate: event.candidate,
+                roomId: roomId
+            }));
+        }
+    };
+}
+
+function toggleRemoteControl() {
+    const remoteScreen = document.getElementById('remote-screen');
+    const toggleButton = document.getElementById('control-toggle');
+    
+    controllerState.isControlEnabled = !controllerState.isControlEnabled;
+    toggleButton.textContent = controllerState.isControlEnabled ? 'Disable Remote Control' : 'Enable Remote Control';
+    
+    if (controllerState.isControlEnabled) {
+        setupRemoteControl(remoteScreen);
+    } else {
+        removeRemoteControl(remoteScreen);
+    }
+}
+
+function setupRemoteControl(remoteScreen) {
+    remoteScreen.addEventListener('mousemove', handleMouseMove);
+    remoteScreen.addEventListener('mousedown', handleMouseDown);
+    remoteScreen.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+}
+
+function removeRemoteControl(remoteScreen) {
+    remoteScreen.removeEventListener('mousemove', handleMouseMove);
+    remoteScreen.removeEventListener('mousedown', handleMouseDown);
+    remoteScreen.removeEventListener('mouseup', handleMouseUp);
+    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keyup', handleKeyUp);
+}
+
+// controlled.js
+const controlledState = {
+    peerConnection: null,
+    roomSocket: null,
+    screenStream: null
+};
+
+async function initializeControlled(roomId) {
+    // Initialize WebSocket connection
+    controlledState.roomSocket = new WebSocket(
+        `wss://${window.location.host}/ws/room/${roomId}/`
+    );
+
+    setupWebSocketHandlers();
+    await setupPeerConnection(roomId);
+}
+
+function setupWebSocketHandlers() {
+    controlledState.roomSocket.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'screen_data') {
+            handleRemoteControl(data.data);
+        } else {
+            // Handle WebRTC signaling
+            switch (data.type) {
+                case 'webrtc.offer':
+                    await handleOffer(data);
+                    break;
+                case 'webrtc.answer':
+                    await handleAnswer(data);
+                    break;
+                case 'ice_candidate':
+                    await handleIceCandidate(data);
+                    break;
+            }
+        }
+    };
+}
+
+async function setupPeerConnection(roomId) {
+    controlledState.peerConnection = new RTCPeerConnection(configuration);
+    
+    controlledState.peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+            controlledState.roomSocket.send(JSON.stringify({
+                type: 'ice_candidate',
+                candidate: event.candidate,
+                roomId: roomId
+            }));
+        }
+    };
+}
+
+async function toggleScreenShare() {
+    const toggleButton = document.getElementById('screen-share-toggle');
+    
+    if (!controlledState.screenStream) {
+        try {
+            controlledState.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: "always" },
+                audio: false
+            });
+            
+            const localVideo = document.getElementById('local-video');
+            localVideo.srcObject = controlledState.screenStream;
+            
+            // Add screen share tracks to peer connection
+            controlledState.screenStream.getTracks().forEach(track => {
+                controlledState.peerConnection.addTrack(track, controlledState.screenStream);
+            });
+            
+            // Create and send offer
+            const offer = await controlledState.peerConnection.createOffer();
+            await controlledState.peerConnection.setLocalDescription(offer);
+            
+            controlledState.roomSocket.send(JSON.stringify({
+                type: 'webrtc.offer',
+                offer: offer,
+                roomId: roomId
+            }));
+            
+            toggleButton.textContent = 'Stop Screen Share';
+        } catch (err) {
+            console.error('Error starting screen share:', err);
+            alert('Failed to start screen sharing. Please make sure to allow screen sharing permissions.');
+        }
+    } else {
+        controlledState.screenStream.getTracks().forEach(track => track.stop());
+        controlledState.screenStream = null;
+        toggleButton.textContent = 'Start Screen Share';
+    }
+}
+
+function handleRemoteControl(data) {
+    if (!controlledState.screenStream) return;
+    
+    switch (data.type) {
+        case 'mouse':
+            handleMouseEvent(data);
+            break;
+        case 'keyboard':
+            handleKeyboardEvent(data);
+            break;
+    }
+}
+</script>
+
+{% endblock %}
