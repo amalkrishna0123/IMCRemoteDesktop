@@ -6,39 +6,26 @@ import pyautogui
 from keyboard import press, release
 import asyncio
 from asgiref.sync import sync_to_async
+from django.db.models import Q
 
 logger = logging.getLogger(__name__)
 
 class RoomConsumer(AsyncWebsocketConsumer):
     async def connect(self):
-        """
-        Handle WebSocket connection setup
-        """
         try:
             self.room_id = self.scope['url_route']['kwargs']['room_id']
-            logger.info(f"Attempting to connect to room: {self.room_id}")
+            self.user = self.scope["user"]
             
-            # Verify room exists and user has access
-            room = await self.get_room()
-            if not room:
-                logger.error(f"Room not found or access denied: {self.room_id}")
+            # Get room and verify access
+            self.room = await self.get_room()
+            if not self.room:
                 await self.close()
                 return
-            
-            # Store room and user information
-            self.user = self.scope["user"]
-            self.room = room
-            
-            # Add to room group
-            await self.channel_layer.group_add(
-                self.room_id,
-                self.channel_name
-            )
-            
+                
+            await self.channel_layer.group_add(self.room_id, self.channel_name)
             await self.accept()
-            logger.info(f"Successfully connected to room: {self.room_id}")
             
-            # Notify room members about new connection
+            # Notify others about connection
             await self.channel_layer.group_send(
                 self.room_id,
                 {
@@ -49,7 +36,7 @@ class RoomConsumer(AsyncWebsocketConsumer):
             )
             
         except Exception as e:
-            logger.error(f"Error in connect for room {self.room_id}: {str(e)}")
+            logger.error(f"Connection error: {str(e)}")
             await self.close()
 
     async def disconnect(self, close_code):
@@ -192,16 +179,15 @@ class RoomConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def get_room(self):
-        """
-        Get room from database
-        """
         from .models import Room
         try:
-            return Room.objects.filter(
-                room_id=self.room_id,
-                is_active=True,
-                is_accepted=True
-            ).first()
+            return Room.objects.get(
+                Q(room_id=self.room_id) & 
+                Q(is_active=True) &
+                (Q(creator=self.scope["user"]) | Q(receiver=self.scope["user"]))
+            )
+        except Room.DoesNotExist:
+            return None
         except Exception as e:
             logger.error(f"Error getting room: {str(e)}")
             return None

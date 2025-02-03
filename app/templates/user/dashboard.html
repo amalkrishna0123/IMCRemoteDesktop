@@ -79,6 +79,18 @@
 </div>
 
 <script>
+
+const config = {
+    peerConnection: null,
+    roomSocket: null,
+    isControlEnabled: false,
+    rtcConfig: {
+        iceServers: [{
+            urls: 'stun:stun.l.google.com:19302'
+        }]
+    }
+};
+
 const state = {
     peerConnection: null,
     roomSocket: null,
@@ -106,37 +118,67 @@ function getCookie(name) {
     return cookieValue;
 }
 
+// Create room functionality
+async function createRoom(receiverId) {
+    try {
+        const response = await fetch('/create-room/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+            },
+            body: JSON.stringify({
+                receiver_id: receiverId
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            // Successful room creation
+            window.location.reload();
+        } else if (response.status === 409) {
+            // Room already exists
+            alert('A room already exists with this user');
+        } else {
+            // Other errors
+            throw new Error(data.error || 'Failed to create room');
+        }
+    } catch (error) {
+        console.error('Error creating room:', error);
+        alert(error.message || 'An error occurred while creating the room');
+    }
+}
+
+// Initialize WebSocket with proper error handling and reconnection
 function initializeWebSocket(roomId) {
-    // Determine protocol (ws:// for http, wss:// for https)
     const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
-    const ws = new WebSocket(
-        `${protocol}${window.location.host}/ws/room/${roomId}/`
-    );
-
+    const wsUrl = `${protocol}${window.location.host}/ws/room/${roomId}/`;
+    
+    const ws = new WebSocket(wsUrl);
+    
     ws.onopen = () => {
-        console.log('WebSocket connected for room:', roomId);
-        state.roomSocket = ws;
+        console.log('WebSocket connected:', roomId);
+        updateConnectionStatus('Connected', roomId);
+        config.roomSocket = ws;
+        setupPeerConnection(roomId);
     };
-
+    
+    ws.onclose = (event) => {
+        console.log('WebSocket closed:', event.code);
+        updateConnectionStatus('Disconnected - Reconnecting...', roomId);
+        setTimeout(() => initializeWebSocket(roomId), 3000);
+    };
+    
     ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        updateConnectionStatus('Connection failed. Please check your connection.', roomId);
+        updateConnectionStatus('Connection error', roomId);
     };
-
-    ws.onclose = (event) => {
-        console.log('WebSocket closed:', event.code, event.reason);
-        updateConnectionStatus('Connection closed. Trying to reconnect...', roomId);
-        // Optional: Implement reconnection logic
-        setTimeout(() => {
-            console.log('Attempting to reconnect...');
-            state.roomSocket = initializeWebSocket(roomId);
-        }, 3000);
-    };
-
+    
     ws.onmessage = async (event) => {
         try {
             const data = JSON.parse(event.data);
-            console.log('Received message:', data.type);
+            console.log('Received:', data.type);
             
             switch (data.type) {
                 case 'webrtc.offer':
@@ -148,20 +190,58 @@ function initializeWebSocket(roomId) {
                 case 'ice_candidate':
                     await handleIceCandidate(data);
                     break;
-                default:
-                    console.log('Unhandled message type:', data.type);
+                case 'screen_data':
+                    handleRemoteControl(data.data);
+                    break;
             }
         } catch (error) {
-            console.error('Error handling message:', error);
+            console.error('Message handling error:', error);
         }
     };
-
+    
     return ws;
 }
 
-// Helper function to update connection status
+// Set up WebRTC peer connection
+async function setupPeerConnection(roomId) {
+    try {
+        config.peerConnection = new RTCPeerConnection(config.rtcConfig);
+        
+        config.peerConnection.onicecandidate = (event) => {
+            if (event.candidate && config.roomSocket) {
+                config.roomSocket.send(JSON.stringify({
+                    type: 'ice_candidate',
+                    candidate: event.candidate,
+                    roomId: roomId
+                }));
+            }
+        };
+        
+        config.peerConnection.ontrack = (event) => {
+            const remoteVideo = document.getElementById('remote-video');
+            if (remoteVideo && event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+            }
+        };
+        
+        // Handle connection state changes
+        config.peerConnection.onconnectionstatechange = () => {
+            updateConnectionStatus(
+                `Connection: ${config.peerConnection.connectionState}`, 
+                roomId
+            );
+        };
+        
+    } catch (error) {
+        console.error('PeerConnection setup error:', error);
+        updateConnectionStatus('Failed to setup connection', roomId);
+    }
+}
+
 function updateConnectionStatus(message, roomId) {
-    const statusElement = document.querySelector(`[data-room-id="${roomId}"] #connection-status`);
+    const statusElement = document.querySelector(
+        `[data-room-id="${roomId}"] #connection-status`
+    );
     if (statusElement) {
         statusElement.textContent = message;
     }
@@ -213,89 +293,112 @@ function toggleRemoteControl() {
     }
 }
 
-function setupRemoteControl(remoteScreen) {
-    remoteScreen.addEventListener('mousemove', handleMouseMove);
-    remoteScreen.addEventListener('mousedown', handleMouseDown);
-    remoteScreen.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
+// Remote control handlers
+function setupRemoteControl(element) {
+    if (!element) return;
+    
+    const handlers = {
+        mousemove: handleMouseMove,
+        mousedown: handleMouseDown,
+        mouseup: handleMouseUp,
+        keydown: handleKeyDown,
+        keyup: handleKeyUp
+    };
+    
+    // Add event listeners
+    element.addEventListener('mousemove', handlers.mousemove);
+    element.addEventListener('mousedown', handlers.mousedown);
+    element.addEventListener('mouseup', handlers.mouseup);
+    document.addEventListener('keydown', handlers.keydown);
+    document.addEventListener('keyup', handlers.keyup);
+    
+    // Store handlers for removal
+    element.remoteControlHandlers = handlers;
 }
 
-function removeRemoteControl(remoteScreen) {
-    remoteScreen.removeEventListener('mousemove', handleMouseMove);
-    remoteScreen.removeEventListener('mousedown', handleMouseDown);
-    remoteScreen.removeEventListener('mouseup', handleMouseUp);
-    document.removeEventListener('keydown', handleKeyDown);
-    document.removeEventListener('keyup', handleKeyUp);
+function removeRemoteControl(element) {
+    if (!element || !element.remoteControlHandlers) return;
+    
+    const handlers = element.remoteControlHandlers;
+    
+    // Remove event listeners
+    element.removeEventListener('mousemove', handlers.mousemove);
+    element.removeEventListener('mousedown', handlers.mousedown);
+    element.removeEventListener('mouseup', handlers.mouseup);
+    document.removeEventListener('keydown', handlers.keydown);
+    document.removeEventListener('keyup', handlers.keyup);
+    
+    delete element.remoteControlHandlers;
 }
 
+// Mouse event handlers with proper coordinate calculation
 function handleMouseMove(e) {
-    if (!state.isControlEnabled || !state.roomSocket) return;
+    if (!config.isControlEnabled || !config.roomSocket) return;
     
     const rect = e.target.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
+    const x = Math.round((e.clientX - rect.left) / rect.width * screen.width);
+    const y = Math.round((e.clientY - rect.top) / rect.height * screen.height);
     
-    state.roomSocket.send(JSON.stringify({
-        type: 'screen_data',
-        data: {
-            type: 'mouse',
-            action: 'move',
-            x: Math.round(x * screen.width),
-            y: Math.round(y * screen.height)
-        }
-    }));
+    sendControlMessage({
+        type: 'mouse',
+        action: 'move',
+        x: x,
+        y: y
+    });
 }
 
 function handleMouseDown(e) {
-    if (!state.isControlEnabled || !state.roomSocket) return;
+    if (!config.isControlEnabled || !config.roomSocket) return;
+    e.preventDefault();
     
-    state.roomSocket.send(JSON.stringify({
-        type: 'screen_data',
-        data: {
-            type: 'mouse',
-            action: 'down',
-            button: e.button
-        }
-    }));
+    sendControlMessage({
+        type: 'mouse',
+        action: 'down',
+        button: e.button
+    });
 }
 
 function handleMouseUp(e) {
-    if (!state.isControlEnabled || !state.roomSocket) return;
+    if (!config.isControlEnabled || !config.roomSocket) return;
+    e.preventDefault();
     
-    state.roomSocket.send(JSON.stringify({
-        type: 'screen_data',
-        data: {
-            type: 'mouse',
-            action: 'up',
-            button: e.button
-        }
-    }));
+    sendControlMessage({
+        type: 'mouse',
+        action: 'up',
+        button: e.button
+    });
 }
 
+// Keyboard event handlers
 function handleKeyDown(e) {
-    if (!state.isControlEnabled || !state.roomSocket) return;
+    if (!config.isControlEnabled || !config.roomSocket) return;
+    e.preventDefault();
     
-    state.roomSocket.send(JSON.stringify({
-        type: 'screen_data',
-        data: {
-            type: 'keyboard',
-            action: 'down',
-            key: e.key
-        }
-    }));
+    sendControlMessage({
+        type: 'keyboard',
+        action: 'down',
+        key: e.key
+    });
 }
 
 function handleKeyUp(e) {
-    if (!state.isControlEnabled || !state.roomSocket) return;
+    if (!config.isControlEnabled || !config.roomSocket) return;
+    e.preventDefault();
     
-    state.roomSocket.send(JSON.stringify({
+    sendControlMessage({
+        type: 'keyboard',
+        action: 'up',
+        key: e.key
+    });
+}
+
+// Utility functions
+function sendControlMessage(data) {
+    if (!config.roomSocket) return;
+    
+    config.roomSocket.send(JSON.stringify({
         type: 'screen_data',
-        data: {
-            type: 'keyboard',
-            action: 'up',
-            key: e.key
-        }
+        data: data
     }));
 }
 
@@ -380,45 +483,50 @@ async function rejectRoom(roomId) {
     }
 }
 
+// Initialize button handler
 document.addEventListener('DOMContentLoaded', () => {
-    const roomContainers = document.querySelectorAll('[data-room-id]');
-    roomContainers.forEach(container => {
-        const roomId = container.dataset.roomId;
-        initializeConnection(roomId);
-        initializeWebSocket(roomId);
-    });
-
     const createRoomButton = document.getElementById('createRoomButton');
-    if (createRoomButton) {
+    const receiverInput = document.getElementById('receiver_id');
+
+    if (createRoomButton && receiverInput) {
+        // Add click event listener
         createRoomButton.addEventListener('click', async () => {
-            const receiverId = document.getElementById('receiver_id').value;
-            if (!receiverId || receiverId.length !== 10) {
-                alert('Please enter a valid 10-digit User ID');
-                return;
-            }
+            // Disable button to prevent double submission
+            createRoomButton.disabled = true;
+            createRoomButton.textContent = 'Creating...';
 
             try {
-                const response = await fetch('/create-room/', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-CSRFToken': getCookie('csrftoken'),
-                    },
-                    body: JSON.stringify({
-                        receiver_id: receiverId,
-                    }),
-                });
+                const receiverId = receiverInput.value.trim();
 
-                const data = await response.json();
-                if (data.success) {
-                    window.location.reload();
-                } else {
-                    alert(data.error || 'Failed to create room');
+                // Validate receiver ID
+                if (!receiverId) {
+                    throw new Error('Please enter a User ID');
                 }
+
+                if (receiverId.length !== 10) {
+                    throw new Error('User ID must be 10 digits');
+                }
+
+                if (!/^\d+$/.test(receiverId)) {
+                    throw new Error('User ID must contain only numbers');
+                }
+
+                await createRoom(receiverId);
+
             } catch (error) {
-                console.error('Error:', error);
-                alert('An error occurred while creating the room');
+                alert(error.message);
+            } finally {
+                // Re-enable button
+                createRoomButton.disabled = false;
+                createRoomButton.textContent = 'Create Room';
             }
+        });
+
+        // Add input validation
+        receiverInput.addEventListener('input', (e) => {
+            const value = e.target.value;
+            // Only allow numbers and limit to 10 digits
+            e.target.value = value.replace(/\D/g, '').slice(0, 10);
         });
     }
 });

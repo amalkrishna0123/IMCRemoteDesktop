@@ -59,7 +59,9 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'remote.wsgi.application'
-ASGI_APPLICATION = 'remote_desktop.asgi.application'
+# ASGI_APPLICATION = 'remote_desktop.asgi.application'
+ASGI_APPLICATION = 'remote.asgi.application'
+
 
 # CHANNEL_LAYERS = {
 #     "default": {
@@ -71,7 +73,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [('127.0.0.1', 6379)],  # Adjust Redis host and port if needed
+            "hosts": [('127.0.0.1', 6379)],
         },
     },
 }
