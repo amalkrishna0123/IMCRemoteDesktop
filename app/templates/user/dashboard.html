@@ -300,24 +300,40 @@ function handleKeyUp(e) {
 }
 
 async function initializeConnection(roomId) {
-    state.peerConnection = new RTCPeerConnection(configuration);
-    
-    state.peerConnection.ontrack = (event) => {
-        const remoteVideo = document.getElementById('remote-video');
-        if (remoteVideo && event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
-        }
-    };
-    
-    state.peerConnection.onicecandidate = (event) => {
-        if (event.candidate && state.roomSocket) {
-            state.roomSocket.send(JSON.stringify({
-                type: 'ice_candidate',
-                candidate: event.candidate,
-                roomId: roomId
-            }));
-        }
-    };
+    try {
+        state.peerConnection = new RTCPeerConnection(configuration);
+        
+        // Add logging for connection state changes
+        state.peerConnection.onconnectionstatechange = () => {
+            console.log("Connection state:", state.peerConnection.connectionState);
+            updateConnectionStatus(`Connection state: ${state.peerConnection.connectionState}`, roomId);
+        };
+        
+        state.peerConnection.ontrack = (event) => {
+            console.log("Received track:", event.track.kind);
+            const remoteVideo = document.getElementById('remote-video');
+            if (remoteVideo && event.streams[0]) {
+                remoteVideo.srcObject = event.streams[0];
+                console.log("Set remote video stream");
+            }
+        };
+        
+        state.peerConnection.onicecandidate = (event) => {
+            if (event.candidate && state.roomSocket) {
+                console.log("Sending ICE candidate");
+                state.roomSocket.send(JSON.stringify({
+                    type: 'ice_candidate',
+                    candidate: event.candidate,
+                    roomId: roomId
+                }));
+            }
+        };
+        
+        console.log("PeerConnection initialized for room:", roomId);
+    } catch (error) {
+        console.error("Error initializing connection:", error);
+        updateConnectionStatus(`Connection error: ${error.message}`, roomId);
+    }
 }
 
 async function acceptRoom(roomId) {
