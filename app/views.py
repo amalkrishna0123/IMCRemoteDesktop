@@ -77,7 +77,7 @@ def user_dashboard(request):
     )
     
     # Determine which template to use
-    template = 'user/controller_dashboard.html' if any(room.creator == request.user for room in active_rooms) else 'user/controlled_dashboard.html'
+    template = 'user/controller_dashboard.html' if any(room.creator == request.user for room in active_rooms) else 'user/dashboard.html'
     
     return render(request, template, {
         'active_rooms': active_rooms,

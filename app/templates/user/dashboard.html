@@ -1,4 +1,3 @@
-
 {% extends 'base.html' %}
 {% load static %}
 {% block content %}
@@ -21,22 +20,15 @@
                     </span>
                 </p>
                 <div class="flex space-x-4 items-center">
-                    <div id="local-screen" class="w-1/3 h-1/3 rounded-lg mb-4 flex items-center justify-center">
-                        <video id="local-video" autoplay playsinline class="w-full h-full object-cover"></video>
-                    </div>
-                    <div id="remote-screen" class="w-2/3 h-1/3 bg-gray-100 rounded-lg mb-4 flex items-center justify-center">
-                        <video id="remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
+                    <div id="remote-screen" class="w-full h-[600px] bg-gray-100 rounded-lg mb-4">
+                        <video id="remote-video" autoplay playsinline class="w-full h-full object-contain"></video>
                     </div>
                 </div>
                 <div id="connection-status"></div>
                 <div class="flex space-x-4">
-                    <button onclick="toggleAudio()" 
+                    <button id="control-toggle" onclick="toggleRemoteControl()" 
                             class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
-                        Toggle Audio
-                    </button>
-                    <button onclick="toggleVideo()" 
-                            class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
-                        Toggle Video
+                        Enable Remote Control
                     </button>
                     <a href="{% url 'end_room' room_id=room.room_id %}" 
                        class="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline text-center">
@@ -55,477 +47,364 @@
                        id="receiver_id" type="text" maxlength="10" placeholder="Enter 10-digit User ID">
             </div>
             <button id="createRoomButton" 
-        class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
-    Create Room
-</button>
+                    class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                Create Room
+            </button>
         </div>
         {% endif %}
-    </div>
 
-     <!-- Pending Invitations Section -->
-     {% if pending_invitations %}
-     <div class="bg-white rounded-lg shadow-lg p-8">
-         <h3 class="text-xl font-bold mb-4">Pending Invitations</h3>
-         <div class="space-y-2">
-             {% for invitation in pending_invitations %}
-             <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-                 <p>From: {{ invitation.creator.user_id }}</p>
-                 <div class="space-x-2">
-                     <button onclick="acceptRoom('{{ invitation.room_id }}')" 
-                             class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
-                         Accept
-                     </button>
-                     <button onclick="rejectRoom('{{ invitation.room_id }}')" 
-                             class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
-                         Reject
-                     </button>
-                 </div>
-             </div>
-             {% endfor %}
-         </div>
-     </div>
-     {% endif %}
-
-    <!-- Connection History Section -->
-    <div class="bg-white rounded-lg shadow-lg p-8">
-        <h3 class="text-xl font-bold mb-4">Connection History</h3>
-        <div class="space-y-2">
-            {% for room in active_rooms %}
-            <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-                <div>
-                    <p class="font-medium">
-                        Connected with: 
-                        {% if room.creator == request.user %}
-                            {{ room.receiver.user_id }}
-                        {% else %}
-                            {{ room.creator.user_id }}
-                        {% endif %}
-                    </p>
-                    <p class="text-sm text-gray-500">{{ room.created_at|date:"F j, Y, g:i a" }}</p>
+        {% if pending_invitations %}
+        <div class="mt-8">
+            <h3 class="text-xl font-bold mb-4">Pending Screen Share Requests</h3>
+            <div class="space-y-2">
+                {% for invitation in pending_invitations %}
+                <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                    <p>From: {{ invitation.creator.user_id }}</p>
+                    <div class="space-x-2">
+                        <button onclick="acceptRoom('{{ invitation.room_id }}')" 
+                                class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
+                            Accept
+                        </button>
+                        <button onclick="rejectRoom('{{ invitation.room_id }}')" 
+                                class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+                            Reject
+                        </button>
+                    </div>
                 </div>
-                <span class="px-3 py-1 bg-gray-200 rounded-full text-sm">
-                    {% if room.is_active %}Active{% else %}Ended{% endif %}
-                </span>
+                {% endfor %}
             </div>
-            {% empty %}
-            <p class="text-gray-500 text-center">No connection history</p>
-            {% endfor %}
         </div>
+        {% endif %}
     </div>
 </div>
 
 <script>
-    // Global state management
-    const state = {
-        peerConnections: {},
-        audioEnabled: true,
-        videoEnabled: true,
-        localStream: null,
-        screenStream: null,
-        isControlled: false,
-        isController: true,
-        roomSocket: null,
-    };
-    
-    const configuration = {
-        iceServers: [{
-            urls: 'stun:stun.l.google.com:19302'
-        }]
-    };
-    
-    // Helper function to get CSRF token
-    function getCookie(name) {
-        let cookieValue = null;
-        if (document.cookie && document.cookie !== '') {
-            const cookies = document.cookie.split(';');
-            for (let i = 0; i < cookies.length; i++) {
-                const cookie = cookies[i].trim();
-                if (cookie.substring(0, name.length + 1) === (name + '=')) {
-                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-                    break;
-                }
+const state = {
+    peerConnection: null,
+    roomSocket: null,
+    isControlEnabled: false
+};
+
+const configuration = {
+    iceServers: [{
+        urls: 'stun:stun.l.google.com:19302'
+    }]
+};
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
             }
         }
-        return cookieValue;
     }
-    
-    // Media control functions
-    function toggleAudio() {
-        state.audioEnabled = !state.audioEnabled;
-        console.log('Audio:', state.audioEnabled ? 'enabled' : 'disabled');
-        if (state.localStream) {
-            state.localStream.getAudioTracks()[0].enabled = state.audioEnabled;
-        }
-    }
-    
-    function toggleVideo() {
-        state.videoEnabled = !state.videoEnabled;
-        console.log('Video:', state.videoEnabled ? 'enabled' : 'disabled');
-        if (state.localStream) {
-            state.localStream.getVideoTracks()[0].enabled = state.videoEnabled;
-        }
-    }
-    
-    // WebSocket initialization
-    function initializeWebSocket(roomId) {
-        const ws = new WebSocket(
-            'wss://' + window.location.host + '/ws/room/' + roomId + '/'
-        );
-    
-        ws.onopen = function(e) {
-            console.log('WebSocket connection established for room:', roomId);
-        };
-    
-        ws.onmessage = function(e) {
-            const data = JSON.parse(e.data);
-            console.log('Received:', data);
+    return cookieValue;
+}
+
+function initializeWebSocket(roomId) {
+    // Determine protocol (ws:// for http, wss:// for https)
+    const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const ws = new WebSocket(
+        `${protocol}${window.location.host}/ws/room/${roomId}/`
+    );
+
+    ws.onopen = () => {
+        console.log('WebSocket connected for room:', roomId);
+        state.roomSocket = ws;
+    };
+
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        updateConnectionStatus('Connection failed. Please check your connection.', roomId);
+    };
+
+    ws.onclose = (event) => {
+        console.log('WebSocket closed:', event.code, event.reason);
+        updateConnectionStatus('Connection closed. Trying to reconnect...', roomId);
+        // Optional: Implement reconnection logic
+        setTimeout(() => {
+            console.log('Attempting to reconnect...');
+            state.roomSocket = initializeWebSocket(roomId);
+        }, 3000);
+    };
+
+    ws.onmessage = async (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            console.log('Received message:', data.type);
             
             switch (data.type) {
                 case 'webrtc.offer':
-                    handleOffer(data);
+                    await handleOffer(data);
                     break;
                 case 'webrtc.answer':
-                    handleAnswer(data);
+                    await handleAnswer(data);
                     break;
                 case 'ice_candidate':
-                    handleIceCandidate(data);
+                    await handleIceCandidate(data);
                     break;
-            }
-        };
-    
-        ws.onclose = function(e) {
-            console.error('WebSocket connection closed unexpectedly for room:', roomId);
-        };
-    
-        ws.onerror = function(e) {
-            console.error('WebSocket error for room:', roomId, e);
-        };
-    
-        return ws;
-    }
-    
-    // Connection state management
-    function addConnectionStateCallback(peerConnection, roomId) {
-        peerConnection.onconnectionstatechange = () => {
-            console.log(`Room ${roomId} connection state:`, peerConnection.connectionState);
-            updateConnectionStatus(`Connection state: ${peerConnection.connectionState}`, roomId);
-        };
-        
-        peerConnection.oniceconnectionstatechange = () => {
-            console.log(`Room ${roomId} ICE connection state:`, peerConnection.iceConnectionState);
-            updateConnectionStatus(`ICE connection state: ${peerConnection.iceConnectionState}`, roomId);
-        };
-        
-        peerConnection.onicegatheringstatechange = () => {
-            console.log(`Room ${roomId} ICE gathering state:`, peerConnection.iceGatheringState);
-        };
-    }
-    
-    function updateConnectionStatus(status, roomId) {
-        const container = document.querySelector(`[data-room-id="${roomId}"]`);
-        if (!container) return;
-    
-        let statusElement = container.querySelector('#connection-status');
-        if (!statusElement) {
-            statusElement = document.createElement('div');
-            statusElement.id = 'connection-status';
-            statusElement.className = 'text-sm text-gray-600 mt-2';
-            container.appendChild(statusElement);
-        }
-        statusElement.textContent = status;
-    }
-    
-    // WebRTC handling functions
-    async function handleOffer(data) {
-        try {
-            const peerConnection = state.peerConnections[data.roomId];
-            if (peerConnection) {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-                
-                state.roomSocket.send(JSON.stringify({
-                    type: 'webrtc.answer',
-                    answer: answer,
-                    roomId: data.roomId
-                }));
+                default:
+                    console.log('Unhandled message type:', data.type);
             }
         } catch (error) {
-            console.error('Error handling offer:', error);
+            console.error('Error handling message:', error);
         }
-    }
-    
-    async function handleAnswer(data) {
-        try {
-            const peerConnection = state.peerConnections[data.roomId];
-            if (peerConnection) {
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-            }
-        } catch (error) {
-            console.error('Error handling answer:', error);
-        }
-    }
-    
-    async function handleIceCandidate(data) {
-        try {
-            const peerConnection = state.peerConnections[data.roomId];
-            if (peerConnection) {
-                await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-            }
-        } catch (error) {
-            console.error('Error handling ICE candidate:', error);
-        }
-    }
-    
-    // Remote control setup
-    function setupRemoteControl(remoteScreen, roomSocket) {
-        if (!state.isController || !roomSocket) return;
-    
-        remoteScreen.addEventListener('mousemove', (e) => {
-            const rect = remoteScreen.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width;
-            const y = (e.clientY - rect.top) / rect.height;
-            
-            roomSocket.send(JSON.stringify({
-                type: 'screen_data',
-                data: {
-                    type: 'mouse',
-                    action: 'mousemove',
-                    x: Math.round(x * screen.width),
-                    y: Math.round(y * screen.height)
-                }
-            }));
-        });
-    
-        remoteScreen.addEventListener('mousedown', (e) => {
-            roomSocket.send(JSON.stringify({
-                type: 'screen_data',
-                data: {
-                    type: 'mouse',
-                    action: 'mousedown',
-                    button: e.button
-                }
-            }));
-        });
-    
-        remoteScreen.addEventListener('mouseup', (e) => {
-            roomSocket.send(JSON.stringify({
-                type: 'screen_data',
-                data: {
-                    type: 'mouse',
-                    action: 'mouseup',
-                    button: e.button
-                }
-            }));
-        });
-    
-        document.addEventListener('keydown', (e) => {
-            if (!state.isController) return;
-            roomSocket.send(JSON.stringify({
-                type: 'screen_data',
-                data: {
-                    type: 'keyboard',
-                    action: 'keydown',
-                    key: e.key
-                }
-            }));
-        });
-    
-        document.addEventListener('keyup', (e) => {
-            if (!state.isController) return;
-            roomSocket.send(JSON.stringify({
-                type: 'screen_data',
-                data: {
-                    type: 'keyboard',
-                    action: 'keyup',
-                    key: e.key
-                }
-            }));
-        });
-    }
-    
-    // Main call setup function
-    async function startCall(roomId, roomSocket) {
-        if (!roomId) {
-            console.error('No room ID provided');
-            return;
-        }
-    
-        try {
-            // Get local media stream
-            state.localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            document.getElementById('local-video').srcObject = state.localStream;
-    
-            // Create peer connection
-            const peerConnection = new RTCPeerConnection(configuration);
-            state.peerConnections[roomId] = peerConnection;
-            addConnectionStateCallback(peerConnection, roomId);
-    
-            // Add local stream
-            state.localStream.getTracks().forEach(track => {
-                peerConnection.addTrack(track, state.localStream);
-            });
-    
-            // Handle incoming tracks
-            peerConnection.ontrack = (event) => {
-                console.log('Received remote track');
-                const remoteVideo = document.getElementById('remote-video');
-                if (remoteVideo && event.streams[0]) {
-                    remoteVideo.srcObject = event.streams[0];
-                }
-            };
-    
-            // Set up ICE candidate handling
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    console.log('Sending ICE candidate');
-                    roomSocket.send(JSON.stringify({
-                        type: 'ice_candidate',
-                        candidate: event.candidate,
-                        roomId: roomId
-                    }));
-                }
-            };
-    
-            // Determine if this user is the room creator
-            const roomElement = document.querySelector(`[data-room-id="${roomId}"]`);
-            const isRoomCreator = roomElement?.dataset.isCreator === 'true';
-    
-            if (isRoomCreator) {
-                console.log('Setting up as room creator (controlled)');
-                try {
-                    state.screenStream = await navigator.mediaDevices.getDisplayMedia({
-                        video: { cursor: "always" },
-                        audio: false
-                    });
-                    
-                    state.screenStream.getTracks().forEach(track => {
-                        peerConnection.addTrack(track, state.screenStream);
-                    });
-                    
-                    state.isControlled = true;
-                    state.isController = false;
-    
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
-                    
-                    roomSocket.send(JSON.stringify({
-                        type: 'webrtc.offer',
-                        offer: offer,
-                        roomId: roomId
-                    }));
-                } catch (err) {
-                    console.error('Error sharing screen:', err);
-                    alert('Failed to start screen sharing. Please make sure to allow screen sharing permissions.');
-                }
-            } else {
-                console.log('Setting up as room receiver (controller)');
-                state.isController = true;
-                state.isControlled = false;
-                setupRemoteControl(document.getElementById('remote-screen'), roomSocket);
-            }
-    
-        } catch (error) {
-            console.error('Error starting call:', error);
-            alert('Failed to start call: ' + error.message);
-        }
-    }
-    
-    // Room management functions
-    async function acceptRoom(roomId) {
-        try {
-            const response = await fetch(`/accept-room/${roomId}/`, {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': getCookie('csrftoken'),
-                    'Content-Type': 'application/json'
-                },
-                credentials: 'same-origin'
-            });
-            
-            const data = await response.json();
-            if (data.success) {
-                window.location.reload();
-            } else {
-                alert(data.error || 'Failed to accept room');
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            alert('Failed to accept room');
-        }
-    }
-    
-    async function rejectRoom(roomId) {
-        try {
-            const response = await fetch(`/reject-room/${roomId}/`, {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': getCookie('csrftoken'),
-                    'Content-Type': 'application/json'
-                },
-                credentials: 'same-origin'
-            });
-            
-            const data = await response.json();
-            if (data.success) {
-                window.location.reload();
-            } else {
-                alert(data.error || 'Failed to reject room');
-            }
-        } catch (error) {
-            console.error('Error:', error);
-            alert('Failed to reject room');
-        }
-    }
-    
-    // Initialize everything when the DOM is loaded
-    document.addEventListener('DOMContentLoaded', () => {
-        // Initialize active rooms
-        const roomContainers = document.querySelectorAll('[data-room-id]');
-        roomContainers.forEach(container => {
-            const roomId = container.dataset.roomId;
-            const ws = initializeWebSocket(roomId);
-            state.roomSocket = ws;
-            startCall(roomId, ws);
-        });
-    
-        // Set up create room button
-        const createRoomButton = document.getElementById('createRoomButton');
-        if (createRoomButton) {
-            createRoomButton.addEventListener('click', async () => {
-                const receiverId = document.getElementById('receiver_id').value;
-                if (!receiverId || receiverId.length !== 10) {
-                    alert('Please enter a valid 10-digit User ID');
-                    return;
-                }
-    
-                try {
-                    const response = await fetch('/create-room/', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': getCookie('csrftoken'),
-                        },
-                        credentials: 'same-origin',
-                        body: JSON.stringify({
-                            receiver_id: receiverId,
-                        }),
-                    });
-    
-                    const data = await response.json();
-                    if (data.success) {
-                        window.location.reload();
-                    } else {
-                        alert(data.error || 'Failed to create room');
-                    }
-                } catch (error) {
-                    console.error('Error:', error);
-                    alert('An error occurred while creating the room. Please try again.');
-                }
-            });
-        }
-    });
-    </script>
+    };
 
-    <script src="{% static 'js/controller.js' %}"></script> 
+    return ws;
+}
+
+// Helper function to update connection status
+function updateConnectionStatus(message, roomId) {
+    const statusElement = document.querySelector(`[data-room-id="${roomId}"] #connection-status`);
+    if (statusElement) {
+        statusElement.textContent = message;
+    }
+}
+
+async function handleOffer(data) {
+    try {
+        await state.peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await state.peerConnection.createAnswer();
+        await state.peerConnection.setLocalDescription(answer);
+        
+        state.roomSocket.send(JSON.stringify({
+            type: 'webrtc.answer',
+            answer: answer,
+            roomId: data.roomId
+        }));
+    } catch (error) {
+        console.error('Error handling offer:', error);
+    }
+}
+
+async function handleAnswer(data) {
+    try {
+        await state.peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+    } catch (error) {
+        console.error('Error handling answer:', error);
+    }
+}
+
+async function handleIceCandidate(data) {
+    try {
+        await state.peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+    } catch (error) {
+        console.error('Error handling ICE candidate:', error);
+    }
+}
+
+function toggleRemoteControl() {
+    const remoteScreen = document.getElementById('remote-screen');
+    const toggleButton = document.getElementById('control-toggle');
+    
+    state.isControlEnabled = !state.isControlEnabled;
+    toggleButton.textContent = state.isControlEnabled ? 'Disable Remote Control' : 'Enable Remote Control';
+    
+    if (state.isControlEnabled) {
+        setupRemoteControl(remoteScreen);
+    } else {
+        removeRemoteControl(remoteScreen);
+    }
+}
+
+function setupRemoteControl(remoteScreen) {
+    remoteScreen.addEventListener('mousemove', handleMouseMove);
+    remoteScreen.addEventListener('mousedown', handleMouseDown);
+    remoteScreen.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+}
+
+function removeRemoteControl(remoteScreen) {
+    remoteScreen.removeEventListener('mousemove', handleMouseMove);
+    remoteScreen.removeEventListener('mousedown', handleMouseDown);
+    remoteScreen.removeEventListener('mouseup', handleMouseUp);
+    document.removeEventListener('keydown', handleKeyDown);
+    document.removeEventListener('keyup', handleKeyUp);
+}
+
+function handleMouseMove(e) {
+    if (!state.isControlEnabled || !state.roomSocket) return;
+    
+    const rect = e.target.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / rect.width;
+    const y = (e.clientY - rect.top) / rect.height;
+    
+    state.roomSocket.send(JSON.stringify({
+        type: 'screen_data',
+        data: {
+            type: 'mouse',
+            action: 'move',
+            x: Math.round(x * screen.width),
+            y: Math.round(y * screen.height)
+        }
+    }));
+}
+
+function handleMouseDown(e) {
+    if (!state.isControlEnabled || !state.roomSocket) return;
+    
+    state.roomSocket.send(JSON.stringify({
+        type: 'screen_data',
+        data: {
+            type: 'mouse',
+            action: 'down',
+            button: e.button
+        }
+    }));
+}
+
+function handleMouseUp(e) {
+    if (!state.isControlEnabled || !state.roomSocket) return;
+    
+    state.roomSocket.send(JSON.stringify({
+        type: 'screen_data',
+        data: {
+            type: 'mouse',
+            action: 'up',
+            button: e.button
+        }
+    }));
+}
+
+function handleKeyDown(e) {
+    if (!state.isControlEnabled || !state.roomSocket) return;
+    
+    state.roomSocket.send(JSON.stringify({
+        type: 'screen_data',
+        data: {
+            type: 'keyboard',
+            action: 'down',
+            key: e.key
+        }
+    }));
+}
+
+function handleKeyUp(e) {
+    if (!state.isControlEnabled || !state.roomSocket) return;
+    
+    state.roomSocket.send(JSON.stringify({
+        type: 'screen_data',
+        data: {
+            type: 'keyboard',
+            action: 'up',
+            key: e.key
+        }
+    }));
+}
+
+async function initializeConnection(roomId) {
+    state.peerConnection = new RTCPeerConnection(configuration);
+    
+    state.peerConnection.ontrack = (event) => {
+        const remoteVideo = document.getElementById('remote-video');
+        if (remoteVideo && event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+        }
+    };
+    
+    state.peerConnection.onicecandidate = (event) => {
+        if (event.candidate && state.roomSocket) {
+            state.roomSocket.send(JSON.stringify({
+                type: 'ice_candidate',
+                candidate: event.candidate,
+                roomId: roomId
+            }));
+        }
+    };
+}
+
+async function acceptRoom(roomId) {
+    try {
+        const response = await fetch(`/accept-room/${roomId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert(data.error || 'Failed to accept room');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to accept room');
+    }
+}
+
+async function rejectRoom(roomId) {
+    try {
+        const response = await fetch(`/reject-room/${roomId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const data = await response.json();
+        if (data.success) {
+            window.location.reload();
+        } else {
+            alert(data.error || 'Failed to reject room');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Failed to reject room');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const roomContainers = document.querySelectorAll('[data-room-id]');
+    roomContainers.forEach(container => {
+        const roomId = container.dataset.roomId;
+        initializeConnection(roomId);
+        initializeWebSocket(roomId);
+    });
+
+    const createRoomButton = document.getElementById('createRoomButton');
+    if (createRoomButton) {
+        createRoomButton.addEventListener('click', async () => {
+            const receiverId = document.getElementById('receiver_id').value;
+            if (!receiverId || receiverId.length !== 10) {
+                alert('Please enter a valid 10-digit User ID');
+                return;
+            }
+
+            try {
+                const response = await fetch('/create-room/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCookie('csrftoken'),
+                    },
+                    body: JSON.stringify({
+                        receiver_id: receiverId,
+                    }),
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    window.location.reload();
+                } else {
+                    alert(data.error || 'Failed to create room');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('An error occurred while creating the room');
+            }
+        });
+    }
+});
+</script>
 {% endblock %}
