@@ -1,4 +1,3 @@
-<!-- controlled_dashboard.html -->
 {% extends 'base.html' %}
 {% load static %}
 {% block content %}
@@ -25,9 +24,9 @@
                         <video id="local-video" autoplay playsinline muted class="w-full h-full object-contain"></video>
                     </div>
                 </div>
-                <div id="connection-status"></div>
+                <div id="connection-status" class="text-sm text-gray-600"></div>
                 <div class="flex space-x-4">
-                    <button onclick="toggleScreenShare()" 
+                    <button onclick="toggleScreenShare('{{ room.room_id }}')" 
                             id="screen-share-toggle"
                             class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
                         Start Screen Share
@@ -41,153 +40,121 @@
             {% endfor %}
         {% endif %}
 
-        <!-- Pending Invitations Section -->
         {% if pending_invitations %}
-        <div class="mt-8">
-            <h3 class="text-xl font-bold mb-4">Pending Screen Share Requests</h3>
-            <div class="space-y-2">
-                {% for invitation in pending_invitations %}
-                <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-                    <p>From: {{ invitation.creator.user_id }}</p>
-                    <div class="space-x-2">
-                        <button onclick="acceptRoom('{{ invitation.room_id }}')" 
-                                class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
-                            Accept
-                        </button>
-                        <button onclick="rejectRoom('{{ invitation.room_id }}')" 
-                                class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
-                            Reject
-                        </button>
+            <div class="mt-8">
+                <h3 class="text-xl font-bold mb-4">Pending Screen Share Requests</h3>
+                <div class="space-y-2">
+                    {% for invitation in pending_invitations %}
+                    <div class="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                        <p>From: {{ invitation.creator.user_id }}</p>
+                        <div class="space-x-2">
+                            <button onclick="acceptInvitation('{{ invitation.room_id }}')" 
+                                    class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
+                                Accept
+                            </button>
+                            <button onclick="rejectInvitation('{{ invitation.room_id }}')" 
+                                    class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded">
+                                Reject
+                            </button>
+                        </div>
                     </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
             </div>
-        </div>
         {% endif %}
     </div>
 </div>
 
 <script>
-    const controllerState = {
-    peerConnection: null,
-    roomSocket: null,
-    isControlEnabled: false
-};
+    const screenShareState = {
+        peerConnection: null,
+        roomSocket: null,
+        screenStream: null,
+        roomId: null
+    };
 
-const configuration = {
-    iceServers: [{
-        urls: 'stun:stun.l.google.com:19302'
-    }]
-};
+    const config = {
+        iceServers: [{
+            urls: 'stun:stun.l.google.com:19302'
+        }]
+    };
 
-function initializeController(roomId) {
-    // Initialize WebSocket connection
-    controllerState.roomSocket = new WebSocket(
-        `wss://${window.location.host}/ws/room/${roomId}/`
-    );
-
-    setupWebSocketHandlers();
-    setupPeerConnection(roomId);
-}
-
-function setupWebSocketHandlers() {
-    controllerState.roomSocket.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
+    async function toggleScreenShare(roomId) {
+        const toggleButton = document.getElementById('screen-share-toggle');
         
-        switch (data.type) {
-            case 'webrtc.offer':
-                await handleOffer(data);
-                break;
-            case 'webrtc.answer':
-                await handleAnswer(data);
-                break;
-            case 'ice_candidate':
-                await handleIceCandidate(data);
-                break;
-        }
-    };
-}
+        if (!screenShareState.screenStream) {
+            try {
+                // Initialize WebSocket if not already done
+                if (!screenShareState.roomSocket) {
+                    initializeWebSocket(roomId);
+                }
 
-function setupPeerConnection(roomId) {
-    controllerState.peerConnection = new RTCPeerConnection(configuration);
-    
-    controllerState.peerConnection.ontrack = (event) => {
-        const remoteVideo = document.getElementById('remote-video');
-        if (remoteVideo && event.streams[0]) {
-            remoteVideo.srcObject = event.streams[0];
-        }
-    };
+                // Get screen sharing stream
+                screenShareState.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: { cursor: "always" },
+                    audio: false
+                });
 
-    controllerState.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            controllerState.roomSocket.send(JSON.stringify({
-                type: 'ice_candidate',
-                candidate: event.candidate,
-                roomId: roomId
-            }));
-        }
-    };
-}
+                // Display local stream
+                const localVideo = document.getElementById('local-video');
+                localVideo.srcObject = screenShareState.screenStream;
 
-function toggleRemoteControl() {
-    const remoteScreen = document.getElementById('remote-screen');
-    const toggleButton = document.getElementById('control-toggle');
-    
-    controllerState.isControlEnabled = !controllerState.isControlEnabled;
-    toggleButton.textContent = controllerState.isControlEnabled ? 'Disable Remote Control' : 'Enable Remote Control';
-    
-    if (controllerState.isControlEnabled) {
-        setupRemoteControl(remoteScreen);
-    } else {
-        removeRemoteControl(remoteScreen);
-    }
-}
+                // Initialize WebRTC connection
+                if (!screenShareState.peerConnection) {
+                    initializePeerConnection();
+                }
 
-function setupRemoteControl(remoteScreen) {
-    remoteScreen.addEventListener('mousemove', handleMouseMove);
-    remoteScreen.addEventListener('mousedown', handleMouseDown);
-    remoteScreen.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
-}
+                // Add tracks to peer connection
+                screenShareState.screenStream.getTracks().forEach(track => {
+                    screenShareState.peerConnection.addTrack(track, screenShareState.screenStream);
+                });
 
-function removeRemoteControl(remoteScreen) {
-    remoteScreen.removeEventListener('mousemove', handleMouseMove);
-    remoteScreen.removeEventListener('mousedown', handleMouseDown);
-    remoteScreen.removeEventListener('mouseup', handleMouseUp);
-    document.removeEventListener('keydown', handleKeyDown);
-    document.removeEventListener('keyup', handleKeyUp);
-}
+                // Create and send offer
+                const offer = await screenShareState.peerConnection.createOffer();
+                await screenShareState.peerConnection.setLocalDescription(offer);
+                
+                screenShareState.roomSocket.send(JSON.stringify({
+                    type: 'webrtc.offer',
+                    offer: offer,
+                    roomId: roomId
+                }));
 
-// controlled.js
-const controlledState = {
-    peerConnection: null,
-    roomSocket: null,
-    screenStream: null
-};
+                toggleButton.textContent = 'Stop Screen Share';
+                toggleButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+                toggleButton.classList.add('bg-red-500', 'hover:bg-red-600');
 
-async function initializeControlled(roomId) {
-    // Initialize WebSocket connection
-    controlledState.roomSocket = new WebSocket(
-        `wss://${window.location.host}/ws/room/${roomId}/`
-    );
-
-    setupWebSocketHandlers();
-    await setupPeerConnection(roomId);
-}
-
-function setupWebSocketHandlers() {
-    controlledState.roomSocket.onmessage = async (event) => {
-        const data = JSON.parse(event.data);
-        
-        if (data.type === 'screen_data') {
-            handleRemoteControl(data.data);
+            } catch (err) {
+                console.error('Error starting screen share:', err);
+                alert('Failed to start screen sharing. Please make sure to allow screen sharing permissions.');
+            }
         } else {
-            // Handle WebRTC signaling
+            // Stop screen sharing
+            screenShareState.screenStream.getTracks().forEach(track => track.stop());
+            screenShareState.screenStream = null;
+            
+            const localVideo = document.getElementById('local-video');
+            localVideo.srcObject = null;
+
+            toggleButton.textContent = 'Start Screen Share';
+            toggleButton.classList.remove('bg-red-500', 'hover:bg-red-600');
+            toggleButton.classList.add('bg-blue-500', 'hover:bg-blue-600');
+        }
+    }
+
+    function initializeWebSocket(roomId) {
+        const protocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        screenShareState.roomSocket = new WebSocket(
+            `${protocol}${window.location.host}/ws/room/${roomId}/`
+        );
+
+        screenShareState.roomSocket.onopen = () => {
+            updateStatus('Connected to WebSocket');
+        };
+
+        screenShareState.roomSocket.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+            
             switch (data.type) {
-                case 'webrtc.offer':
-                    await handleOffer(data);
-                    break;
                 case 'webrtc.answer':
                     await handleAnswer(data);
                     break;
@@ -195,76 +162,117 @@ function setupWebSocketHandlers() {
                     await handleIceCandidate(data);
                     break;
             }
-        }
-    };
-}
+        };
 
-async function setupPeerConnection(roomId) {
-    controlledState.peerConnection = new RTCPeerConnection(configuration);
-    
-    controlledState.peerConnection.onicecandidate = (event) => {
-        if (event.candidate) {
-            controlledState.roomSocket.send(JSON.stringify({
-                type: 'ice_candidate',
-                candidate: event.candidate,
-                roomId: roomId
-            }));
-        }
-    };
-}
+        screenShareState.roomSocket.onclose = () => {
+            updateStatus('WebSocket disconnected');
+        };
+    }
 
-async function toggleScreenShare() {
-    const toggleButton = document.getElementById('screen-share-toggle');
-    
-    if (!controlledState.screenStream) {
+    function initializePeerConnection() {
+        screenShareState.peerConnection = new RTCPeerConnection(config);
+
+        screenShareState.peerConnection.onicecandidate = (event) => {
+            if (event.candidate && screenShareState.roomSocket) {
+                screenShareState.roomSocket.send(JSON.stringify({
+                    type: 'ice_candidate',
+                    candidate: event.candidate
+                }));
+            }
+        };
+
+        screenShareState.peerConnection.onconnectionstatechange = () => {
+            updateStatus(`WebRTC ${screenShareState.peerConnection.connectionState}`);
+        };
+    }
+
+    async function handleAnswer(data) {
         try {
-            controlledState.screenStream = await navigator.mediaDevices.getDisplayMedia({
-                video: { cursor: "always" },
-                audio: false
-            });
-            
-            const localVideo = document.getElementById('local-video');
-            localVideo.srcObject = controlledState.screenStream;
-            
-            // Add screen share tracks to peer connection
-            controlledState.screenStream.getTracks().forEach(track => {
-                controlledState.peerConnection.addTrack(track, controlledState.screenStream);
-            });
-            
-            // Create and send offer
-            const offer = await controlledState.peerConnection.createOffer();
-            await controlledState.peerConnection.setLocalDescription(offer);
-            
-            controlledState.roomSocket.send(JSON.stringify({
-                type: 'webrtc.offer',
-                offer: offer,
-                roomId: roomId
-            }));
-            
-            toggleButton.textContent = 'Stop Screen Share';
-        } catch (err) {
-            console.error('Error starting screen share:', err);
-            alert('Failed to start screen sharing. Please make sure to allow screen sharing permissions.');
+            await screenShareState.peerConnection.setRemoteDescription(
+                new RTCSessionDescription(data.answer)
+            );
+        } catch (error) {
+            console.error('Error handling answer:', error);
         }
-    } else {
-        controlledState.screenStream.getTracks().forEach(track => track.stop());
-        controlledState.screenStream = null;
-        toggleButton.textContent = 'Start Screen Share';
     }
-}
 
-function handleRemoteControl(data) {
-    if (!controlledState.screenStream) return;
-    
-    switch (data.type) {
-        case 'mouse':
-            handleMouseEvent(data);
-            break;
-        case 'keyboard':
-            handleKeyboardEvent(data);
-            break;
+    async function handleIceCandidate(data) {
+        try {
+            if (data.candidate) {
+                await screenShareState.peerConnection.addIceCandidate(
+                    new RTCIceCandidate(data.candidate)
+                );
+            }
+        } catch (error) {
+            console.error('Error handling ICE candidate:', error);
+        }
     }
-}
+
+    function updateStatus(message) {
+        const statusElement = document.getElementById('connection-status');
+        if (statusElement) {
+            statusElement.textContent = message;
+        }
+    }
+
+    async function acceptInvitation(roomId) {
+        try {
+            const response = await fetch(`/accept-room/${roomId}/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken'),
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to accept invitation');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to accept invitation');
+        }
+    }
+
+    async function rejectInvitation(roomId) {
+        try {
+            const response = await fetch(`/reject-room/${roomId}/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken'),
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const data = await response.json();
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert(data.error || 'Failed to reject invitation');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Failed to reject invitation');
+        }
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
 </script>
 
 {% endblock %}

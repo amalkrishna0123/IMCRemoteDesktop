@@ -1,0 +1,81 @@
+<!-- controlled_dashboard.html -->
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="h-screen flex flex-col">
+    <div class="bg-gray-800 text-white p-4 flex justify-between items-center">
+        <h1 class="text-xl font-bold">Sharing with: {{ room.creator.username }}</h1>
+        <button onclick="endRoom('{{ room.room_id }}')"
+                class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">
+            End Session
+        </button>
+    </div>
+    
+    <div class="flex-1 bg-gray-900 p-4 flex items-center justify-center">
+        <p class="text-white text-xl">Sharing your screen...</p>
+    </div>
+</div>
+
+<script>
+let pc;
+let ws;
+
+async function initWebRTC() {
+    pc = new RTCPeerConnection();
+    
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false
+        });
+        
+        stream.getTracks().forEach(track => {
+            pc.addTrack(track, stream);
+        });
+        
+        ws = new WebSocket(`ws://${window.location.host}/ws/room/{{ room.room_id }}/`);
+        
+        ws.onmessage = async (event) => {
+            const data = JSON.parse(event.data);
+            
+            if (data.type === 'webrtc.offer') {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                
+                ws.send(JSON.stringify({
+                    type: 'webrtc.answer',
+                    answer: answer
+                }));
+            } else if (data.type === 'ice_candidate') {
+                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+        };
+        
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                ws.send(JSON.stringify({
+                    type: 'ice_candidate',
+                    candidate: event.candidate
+                }));
+            }
+        };
+    } catch (error) {
+        console.error('Error accessing screen:', error);
+        alert('Failed to access screen sharing. Please try again.');
+    }
+}
+
+// Initialize when page loads
+initWebRTC();
+
+async function endRoom(roomId) {
+    try {
+        await fetch(`/end_room/${roomId}/`, { method: 'POST' });
+        window.location.href = '/dashboard/';
+    } catch (error) {
+        alert('Error ending room');
+    }
+}
+</script>
+{% endblock %}

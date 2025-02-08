@@ -83,6 +83,7 @@
 const config = {
     peerConnection: null,
     roomSocket: null,
+    screenStream: null,
     isControlEnabled: false,
     rtcConfig: {
         iceServers: [{
@@ -102,6 +103,159 @@ const configuration = {
         urls: 'stun:stun.l.google.com:19302'
     }]
 };
+
+// Initialize remote control events
+function initializeRemoteControl() {
+    const videoElement = document.getElementById('local-video');
+    
+    if (!videoElement) return;
+    
+    let isMouseDown = false;
+    const boundingRect = videoElement.getBoundingClientRect();
+
+    videoElement.addEventListener('mousemove', (e) => {
+        if (!screenShareState.roomSocket) return;
+        
+        const rect = videoElement.getBoundingClientRect();
+        const x = (e.clientX - rect.left) / rect.width;
+        const y = (e.clientY - rect.top) / rect.height;
+        
+        screenShareState.roomSocket.send(JSON.stringify({
+            type: 'screen_data',
+            data: {
+                type: 'mouse',
+                action: 'move',
+                x: Math.round(x * screen.width),
+                y: Math.round(y * screen.height)
+            }
+        }));
+    });
+
+    videoElement.addEventListener('mousedown', (e) => {
+        if (!screenShareState.roomSocket) return;
+        isMouseDown = true;
+        
+        screenShareState.roomSocket.send(JSON.stringify({
+            type: 'screen_data',
+            data: {
+                type: 'mouse',
+                action: 'down',
+                button: e.button === 0 ? 'left' : 'right'
+            }
+        }));
+    });
+
+    videoElement.addEventListener('mouseup', (e) => {
+        if (!screenShareState.roomSocket) return;
+        isMouseDown = false;
+        
+        screenShareState.roomSocket.send(JSON.stringify({
+            type: 'screen_data',
+            data: {
+                type: 'mouse',
+                action: 'up',
+                button: e.button === 0 ? 'left' : 'right'
+            }
+        }));
+    });
+
+    // Keyboard events
+    document.addEventListener('keydown', (e) => {
+        if (!screenShareState.roomSocket) return;
+        
+        screenShareState.roomSocket.send(JSON.stringify({
+            type: 'screen_data',
+            data: {
+                type: 'keyboard',
+                action: 'down',
+                key: e.key
+            }
+        }));
+    });
+
+    document.addEventListener('keyup', (e) => {
+        if (!screenShareState.roomSocket) return;
+        
+        screenShareState.roomSocket.send(JSON.stringify({
+            type: 'screen_data',
+            data: {
+                type: 'keyboard',
+                action: 'up',
+                key: e.key
+            }
+        }));
+    });
+}
+
+{% comment %} async function toggleScreenShare(roomId) {
+    const toggleButton = document.getElementById('screen-share-toggle');
+    
+    if (!screenShareState.screenStream) {
+        try {
+            if (!screenShareState.roomSocket) {
+                initializeWebSocket(roomId);
+            }
+
+            screenShareState.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: "always" },
+                audio: false
+            });
+
+            const localVideo = document.getElementById('local-video');
+            localVideo.srcObject = screenShareState.screenStream;
+
+            if (!screenShareState.peerConnection) {
+                initializePeerConnection();
+            }
+
+            screenShareState.screenStream.getTracks().forEach(track => {
+                screenShareState.peerConnection.addTrack(track, screenShareState.screenStream);
+            });
+
+            const offer = await screenShareState.peerConnection.createOffer();
+            await screenShareState.peerConnection.setLocalDescription(offer);
+            
+            screenShareState.roomSocket.send(JSON.stringify({
+                type: 'webrtc.offer',
+                offer: offer,
+                roomId: roomId
+            }));
+
+            toggleButton.textContent = 'Stop Screen Share';
+            toggleButton.classList.remove('bg-blue-500', 'hover:bg-blue-600');
+            toggleButton.classList.add('bg-red-500', 'hover:bg-red-600');
+
+        } catch (err) {
+            console.error('Error starting screen share:', err);
+            alert('Failed to start screen sharing');
+        }
+    } else {
+        stopScreenShare(toggleButton);
+    }
+} {% endcomment %}
+
+function stopScreenShare(toggleButton) {
+    if (screenShareState.screenStream) {
+        screenShareState.screenStream.getTracks().forEach(track => track.stop());
+        screenShareState.screenStream = null;
+    }
+    
+    if (screenShareState.peerConnection) {
+        screenShareState.peerConnection.close();
+        screenShareState.peerConnection = null;
+    }
+    
+    const localVideo = document.getElementById('local-video');
+    if (localVideo) {
+        localVideo.srcObject = null;
+    }
+
+    if (toggleButton) {
+        toggleButton.textContent = 'Start Screen Share';
+        toggleButton.classList.remove('bg-red-500', 'hover:bg-red-600');
+        toggleButton.classList.add('bg-blue-500', 'hover:bg-blue-600');
+    }
+}
 
 function getCookie(name) {
     let cookieValue = null;

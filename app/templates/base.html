@@ -28,13 +28,13 @@
     
     <main class="container mx-auto px-6 py-8">
         {% if messages %}
-        <div class="mb-8">
-            {% for message in messages %}
-            <div class="bg-{{ message.tags }}-100 border border-{{ message.tags }}-400 text-{{ message.tags }}-700 px-4 py-3 rounded relative" role="alert">
-                <span class="block sm:inline">{{ message }}</span>
+            <div class="messages">
+                {% for message in messages %}
+                <div class="alert {% if message.tags %}alert-{{ message.tags }}{% endif %}">
+                    {{ message }}
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
-        </div>
         {% endif %}
         
         {% block content %}{% endblock %}

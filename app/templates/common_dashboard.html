@@ -1,0 +1,131 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto p-6 space-y-8">
+    <div class="bg-white rounded-lg shadow-lg p-8">
+        <h2 class="text-2xl font-bold mb-6">Welcome, {{ request.user.username }}</h2>
+        <div class="mb-4">
+            <p class="text-gray-600">Your User ID: <span class="font-mono bg-gray-100 px-2 py-1 rounded">{{ user_id }}</span></p>
+        </div>
+        
+        <form id="createRoomForm" class="space-y-4">
+            {% csrf_token %}
+            <div>
+                <label for="receiver_id" class="block text-sm font-medium text-gray-700">Enter User ID to Connect</label>
+                <input type="text" id="receiver_id" name="receiver_id" 
+                       class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500"
+                       placeholder="Enter 10-digit User ID">
+            </div>
+            <button type="submit" 
+                    class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+                Create Room
+            </button>
+        </form>
+    </div>
+
+    {% if pending_invitations %}
+    <div class="bg-white rounded-lg shadow-lg p-8">
+        <h3 class="text-xl font-bold mb-4">Pending Invitations</h3>
+        <div class="space-y-4">
+            {% for room in pending_invitations %}
+            <div class="border rounded p-4 flex justify-between items-center">
+                <div>
+                    <p class="font-medium">From: {{ room.creator.username }}</p>
+                    <p class="text-sm text-gray-500">Room ID: {{ room.room_id }}</p>
+                </div>
+                <div class="space-x-2">
+                    <button onclick="acceptRoom('{{ room.room_id }}')" 
+                            class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded">
+                        Accept
+                    </button>
+                    <button onclick="rejectRoom('{{ room.room_id }}')"
+                            class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">
+                        Reject
+                    </button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+
+    document.getElementById('createRoomForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const receiverId = document.getElementById('receiver_id').value;
+        
+        try {
+            const response = await fetch('/create_room/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ receiver_id: receiverId })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                if (data.success) {
+                    // Redirect to the room
+                    window.location.href = `/room/${data.room_id}/`;
+                } else {
+                    alert(data.error || 'Error creating room');
+                }
+            } else {
+                alert(data.error || 'Server error occurred');
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error creating room. Please try again.');
+        }
+    });
+    
+async function acceptRoom(roomId) {
+    try {
+        const response = await fetch(`/accept_room/${roomId}/`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Server error');
+        }
+        
+        if (data.success) {
+            window.location.href = `/room/${roomId}/`;
+        } else {
+            throw new Error(data.error || 'Failed to accept room');
+        }
+    } catch (error) {
+        console.error('Error accepting room:', error);
+        alert(`Error accepting room: ${error.message}`);
+    }
+}
+
+async function rejectRoom(roomId) {
+    try {
+        const response = await fetch(`/reject_room/${roomId}/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+            }
+        });
+        
+        if (response.ok) {
+            window.location.reload();
+        }
+    } catch (error) {
+        alert('Error rejecting room');
+    }
+}
+</script>
+{% endblock %}

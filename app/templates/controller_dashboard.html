@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="h-screen flex flex-col">
+    <div class="bg-gray-800 text-white p-4 flex justify-between items-center">
+        <h1 class="text-xl font-bold">Controlling: {{ room.receiver.username }}</h1>
+        <button onclick="endRoom('{{ room.room_id }}')"
+                class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">
+            End Session
+        </button>
+    </div>
+    
+    <div class="flex-1 bg-gray-900 p-4">
+        <div id="remoteVideo" class="w-full h-full bg-black rounded"></div>
+    </div>
+</div>
+
+<script>
+let pc;
+let ws;
+
+async function initWebRTC() {
+    pc = new RTCPeerConnection();
+    
+    pc.ontrack = (event) => {
+        const remoteVideo = document.getElementById('remoteVideo');
+        if (event.streams && event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+        }
+    };
+
+    ws = new WebSocket(`ws://${window.location.host}/ws/room/{{ room.room_id }}/`);
+    
+    ws.onmessage = async (event) => {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === 'webrtc.answer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        } else if (data.type === 'ice_candidate') {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+    };
+}
+
+// Initialize when page loads
+initWebRTC();
+
+async function endRoom(roomId) {
+    try {
+        await fetch(`/end_room/${roomId}/`, { method: 'POST' });
+        window.location.href = '/dashboard/';
+    } catch (error) {
+        alert('Error ending room');
+    }
+}
+</script>
+{% endblock %}
