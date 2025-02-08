@@ -20,8 +20,21 @@
 let pc;
 let ws;
 
+function getWebSocketUrl(roomId) {
+    // Get the current protocol (http: or https:)
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Get the host (domain name and port if any)
+    const host = window.location.host;
+    // Return the complete WebSocket URL
+    return `${protocol}//${host}/ws/room/${roomId}/`;
+}
+
 async function initWebRTC() {
-    pc = new RTCPeerConnection();
+    pc = new RTCPeerConnection({
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+        ]
+    });
     
     try {
         const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -33,22 +46,37 @@ async function initWebRTC() {
             pc.addTrack(track, stream);
         });
         
-        ws = new WebSocket(`ws://${window.location.host}/ws/room/{{ room.room_id }}/`);
+        // Use the helper function to get the correct WebSocket URL
+        const wsUrl = getWebSocketUrl('{{ room.room_id }}');
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+            console.log('WebSocket connection established');
+        };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            alert('Connection error occurred. Please try refreshing the page.');
+        };
         
         ws.onmessage = async (event) => {
-            const data = JSON.parse(event.data);
-            
-            if (data.type === 'webrtc.offer') {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
+            try {
+                const data = JSON.parse(event.data);
                 
-                ws.send(JSON.stringify({
-                    type: 'webrtc.answer',
-                    answer: answer
-                }));
-            } else if (data.type === 'ice_candidate') {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                if (data.type === 'webrtc.offer') {
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    
+                    ws.send(JSON.stringify({
+                        type: 'webrtc.answer',
+                        answer: answer
+                    }));
+                } else if (data.type === 'ice_candidate' && data.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
+            } catch (error) {
+                console.error('Error processing message:', error);
             }
         };
         
@@ -60,11 +88,21 @@ async function initWebRTC() {
                 }));
             }
         };
+        
+        // Handle connection state changes
+        pc.onconnectionstatechange = () => {
+            console.log('Connection state:', pc.connectionState);
+            if (pc.connectionState === 'failed') {
+                alert('Connection failed. Please try refreshing the page.');
+            }
+        };
+        
     } catch (error) {
         console.error('Error accessing screen:', error);
-        alert('Failed to access screen sharing. Please try again.');
+        alert('Failed to access screen sharing. Please make sure to allow screen sharing and try again.');
     }
 }
+
 
 // Initialize when page loads
 initWebRTC();
@@ -77,5 +115,6 @@ async function endRoom(roomId) {
         alert('Error ending room');
     }
 }
+
 </script>
 {% endblock %}
