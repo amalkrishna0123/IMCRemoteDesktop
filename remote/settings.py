@@ -78,6 +78,17 @@ CHANNEL_LAYERS = {
     },
 }
 
+CHANNEL_LAYERS_CONFIG = {
+    "DEFAULT": {
+        "MIDDLEWARE": [
+            "channels.middleware.BaseMiddleware",
+            "channels.security.websocket.AllowedHostsOriginValidator",
+            "channels.security.websocket.OriginValidator",
+        ],
+        "ROUTING": "remote.routing.application",  # replace with your project name
+    }
+}
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

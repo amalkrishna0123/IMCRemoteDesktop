@@ -16,14 +16,26 @@ class RoomConsumer(AsyncWebsocketConsumer):
             self.room_id = self.scope['url_route']['kwargs']['room_id']
             self.user = self.scope["user"]
             
+            if not self.user.is_authenticated:
+                logger.error(f"Unauthenticated user tried to connect to room {self.room_id}")
+                await self.close()
+                return
+            
             # Get room and verify access
             self.room = await self.get_room()
             if not self.room:
+                logger.error(f"Room {self.room_id} not found or user {self.user.id} has no access")
                 await self.close()
                 return
-                
-            await self.channel_layer.group_add(self.room_id, self.channel_name)
+            
+            # Add to room group
+            await self.channel_layer.group_add(
+                self.room_id,
+                self.channel_name
+            )
+            
             await self.accept()
+            logger.info(f"User {self.user.id} connected to room {self.room_id}")
             
             # Notify others about connection
             await self.channel_layer.group_send(
@@ -36,8 +48,9 @@ class RoomConsumer(AsyncWebsocketConsumer):
             )
             
         except Exception as e:
-            logger.error(f"Connection error: {str(e)}")
+            logger.error(f"Connection error in room {self.room_id}: {str(e)}")
             await self.close()
+            return
 
     async def disconnect(self, close_code):
         """
@@ -64,29 +77,33 @@ class RoomConsumer(AsyncWebsocketConsumer):
             logger.error(f"Error in disconnect for room {self.room_id}: {str(e)}")
 
     async def receive(self, text_data):
-        """
-        Handle incoming WebSocket messages
-        """
         try:
             data = json.loads(text_data)
             message_type = data.get('type')
-            logger.debug(f"Received message type: {message_type} for room: {self.room_id}")
-
-            if message_type == 'webrtc.offer':
-                await self.handle_webrtc_offer(data)
-            elif message_type == 'webrtc.answer':
-                await self.handle_webrtc_answer(data)
-            elif message_type == 'ice_candidate':
-                await self.handle_ice_candidate(data)
+            
+            # Forward all messages to the group except screen_data
+            if message_type != 'screen_data':
+                await self.channel_layer.group_send(
+                    self.room_id,
+                    {
+                        'type': message_type,
+                        **data,
+                        'sender_id': str(self.user.user_id)
+                    }
+                )
             elif message_type == 'screen_data':
-                await self.handle_screen_data(data)
-            else:
-                logger.warning(f"Unknown message type received: {message_type}")
-
-        except json.JSONDecodeError:
-            logger.error("Invalid JSON received")
+                if await self.verify_control_permission():
+                    await self.process_screen_data(data.get('data', {}))
+                
         except Exception as e:
-            logger.error(f"Error processing message: {str(e)}")
+            logger.error(f"Error in receive: {str(e)}")
+
+    
+    async def screen_ready(self, event):
+        """Handle screen ready notification"""
+        if str(self.user.user_id) != event.get('sender_id'):
+            await self.send(text_data=json.dumps(event))
+
 
     async def handle_webrtc_offer(self, data):
         """
@@ -182,9 +199,10 @@ class RoomConsumer(AsyncWebsocketConsumer):
         from .models import Room
         try:
             return Room.objects.get(
-                Q(room_id=self.room_id) & 
-                Q(is_active=True) &
-                (Q(creator=self.scope["user"]) | Q(receiver=self.scope["user"]))
+                Q(creator=self.user) | Q(receiver=self.user),
+                room_id=self.room_id,
+                is_active=True,
+                is_accepted=True
             )
         except Room.DoesNotExist:
             return None
@@ -194,23 +212,15 @@ class RoomConsumer(AsyncWebsocketConsumer):
 
     # WebRTC message handlers
     async def webrtc_offer(self, event):
-        """
-        Send WebRTC offer to clients
-        """
         if str(self.user.user_id) != event.get('sender_id'):
             await self.send(text_data=json.dumps(event))
 
+
     async def webrtc_answer(self, event):
-        """
-        Send WebRTC answer to clients
-        """
         if str(self.user.user_id) != event.get('sender_id'):
             await self.send(text_data=json.dumps(event))
 
     async def ice_candidate(self, event):
-        """
-        Send ICE candidate to clients
-        """
         if str(self.user.user_id) != event.get('sender_id'):
             await self.send(text_data=json.dumps(event))
 

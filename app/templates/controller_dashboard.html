@@ -3,7 +3,9 @@
 {% block content %}
 <div class="h-screen flex flex-col">
     <div class="bg-gray-800 text-white p-4 flex justify-between items-center">
-        <h1 class="text-xl font-bold">Controlling: {{ room.receiver.username }}</h1>
+        <div class="flex-1 bg-gray-900 p-4">
+            <video id="remoteVideo" autoplay playsinline class="w-full h-full object-contain"></video>
+        </div>
         <button onclick="endRoom('{{ room.room_id }}')"
                 class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded">
             End Session
@@ -20,51 +22,69 @@ let pc;
 let ws;
 
 function getWebSocketUrl(roomId) {
-    // Get the current protocol (http: or https:)
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Get the host (domain name and port if any)
     const host = window.location.host;
-    // Return the complete WebSocket URL
     return `${protocol}//${host}/ws/room/${roomId}/`;
 }
 
 async function initWebRTC() {
     pc = new RTCPeerConnection({
         iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' }
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun1.l.google.com:19302' }
         ]
     });
     
+    const remoteVideo = document.getElementById('remoteVideo');
+    remoteVideo.style.width = '100%';
+    remoteVideo.style.height = '100%';
+    remoteVideo.style.objectFit = 'contain';
+    
     pc.ontrack = (event) => {
-        const remoteVideo = document.getElementById('remoteVideo');
         if (event.streams && event.streams[0]) {
             remoteVideo.srcObject = event.streams[0];
+            remoteVideo.play().catch(e => console.error('Error playing video:', e));
         }
     };
     
-    // Use the helper function to get the correct WebSocket URL
     const wsUrl = getWebSocketUrl('{{ room.room_id }}');
     ws = new WebSocket(wsUrl);
     
     ws.onopen = () => {
         console.log('WebSocket connection established');
-        // Create and send offer once connected
-        createAndSendOffer();
-    };
-    
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        alert('Connection error occurred. Please try refreshing the page.');
     };
     
     ws.onmessage = async (event) => {
         try {
             const data = JSON.parse(event.data);
             
-            if (data.type === 'webrtc.answer') {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-            } else if (data.type === 'ice_candidate' && data.candidate) {
-                await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            switch(data.type) {
+                case 'screen_ready':
+                    // Create and send offer when controlled user is ready
+                    const offer = await pc.createOffer({
+                        offerToReceiveVideo: true,
+                        offerToReceiveAudio: false
+                    });
+                    await pc.setLocalDescription(offer);
+                    ws.send(JSON.stringify({
+                        type: 'webrtc.offer',
+                        offer: offer
+                    }));
+                    break;
+                    
+                case 'webrtc.answer':
+                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                    break;
+                    
+                case 'ice_candidate':
+                    if (data.candidate) {
+                        try {
+                            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                        } catch (e) {
+                            console.error('Error adding received ice candidate', e);
+                        }
+                    }
+                    break;
             }
         } catch (error) {
             console.error('Error processing message:', error);
@@ -80,7 +100,6 @@ async function initWebRTC() {
         }
     };
     
-    // Handle connection state changes
     pc.onconnectionstatechange = () => {
         console.log('Connection state:', pc.connectionState);
         if (pc.connectionState === 'failed') {
@@ -91,6 +110,56 @@ async function initWebRTC() {
 
 // Initialize when page loads
 initWebRTC();
+
+async function initWebSocket() {
+    const maxRetries = 3;
+    let retryCount = 0;
+    
+    const connectWebSocket = () => {
+        return new Promise((resolve, reject) => {
+            const wsUrl = getWebSocketUrl('{{ room.room_id }}');
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connection established');
+                resolve(ws);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                reject(error);
+            };
+            
+            ws.onclose = (event) => {
+                if (!event.wasClean) {
+                    console.log('WebSocket connection lost. Attempting to reconnect...');
+                    if (retryCount < maxRetries) {
+                        retryCount++;
+                        setTimeout(() => {
+                            connectWebSocket().catch(console.error);
+                        }, 1000 * retryCount); // Exponential backoff
+                    } else {
+                        alert('Unable to establish connection. Please refresh the page.');
+                    }
+                }
+            };
+        });
+    };
+    
+    try {
+        await connectWebSocket();
+        // Initialize WebRTC after successful WebSocket connection
+        await initWebRTC();
+    } catch (error) {
+        console.error('Failed to establish WebSocket connection:', error);
+        alert('Connection error occurred. Please try refreshing the page.');
+    }
+}
+
+// Call initWebSocket instead of initWebRTC directly
+document.addEventListener('DOMContentLoaded', () => {
+    initWebSocket();
+})
 
 async function endRoom(roomId) {
     try {
@@ -115,6 +184,8 @@ async function createAndSendOffer() {
         alert('Failed to establish connection. Please try refreshing the page.');
     }
 }
+
+
 
 
 </script>
